@@ -1,0 +1,14 @@
+services:
+  check:
+    build: .
+    working_dir: /app
+    volumes:
+      - ./:/app
+    command: python -m py_compile main.py
+
+  build:
+    build: .
+    working_dir: /app
+    volumes:
+      - ./:/app
+    command: pyinstaller --noconfirm --clean --windowed --onedir --name EchoProtocolPrototype --collect-all panda3d --add-data "Config.prc:." main.py
