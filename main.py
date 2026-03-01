@@ -10,17 +10,22 @@ SCREEN_WIDTH = 1280
 SCREEN_HEIGHT = 720
 FPS = 60
 
-WORLD_WIDTH = 3200
-WORLD_HEIGHT = 2200
+TILE_SIZE = 64
+GRID_COLS = 50
+GRID_ROWS = 34
+WORLD_WIDTH = GRID_COLS * TILE_SIZE
+WORLD_HEIGHT = GRID_ROWS * TILE_SIZE
 WORLD_RECT = pygame.Rect(0, 0, WORLD_WIDTH, WORLD_HEIGHT)
 
-TILE_SIZE = 64
-PLAYER_RADIUS = 20
-PLAYER_SPEED = 310
+PLAYER_MOVE_TIME = 0.11
+ENEMY_MOVE_TIME = 0.13
+ENEMY_STEP_INTERVAL = 0.42
+
 BULLET_SPEED = 830
 BULLET_LIFETIME = 1.2
 SHOT_COOLDOWN = 0.14
-ENEMY_SPEED = 120
+ENEMY_ATTACK_COOLDOWN = 0.65
+ENEMY_ATTACK_DAMAGE = 9
 
 STATE_MENU = "menu"
 STATE_PLAYING = "playing"
@@ -36,14 +41,23 @@ class Bullet:
 
 @dataclass
 class Enemy:
+    cell: tuple[int, int]
     pos: pygame.Vector2
+    move_from: pygame.Vector2
+    move_to: pygame.Vector2
+    move_timer: float
+    step_timer: float
     hp: int
     attack_cooldown: float
 
 
 @dataclass
 class Player:
+    cell: tuple[int, int]
     pos: pygame.Vector2
+    move_from: pygame.Vector2
+    move_to: pygame.Vector2
+    move_timer: float
     hp: int
     shot_timer: float
 
@@ -125,88 +139,39 @@ def make_enemy_sprite() -> pygame.Surface:
     return surf
 
 
+def cell_to_world(cell: tuple[int, int]) -> pygame.Vector2:
+    return pygame.Vector2(
+        cell[0] * TILE_SIZE + TILE_SIZE * 0.5,
+        cell[1] * TILE_SIZE + TILE_SIZE * 0.5,
+    )
+
+
+def world_to_cell(pos: pygame.Vector2) -> tuple[int, int]:
+    return int(pos.x // TILE_SIZE), int(pos.y // TILE_SIZE)
+
+
+def cell_inside(cell: tuple[int, int]) -> bool:
+    return 0 <= cell[0] < GRID_COLS and 0 <= cell[1] < GRID_ROWS
+
+
+def manhattan(a: tuple[int, int], b: tuple[int, int]) -> int:
+    return abs(a[0] - b[0]) + abs(a[1] - b[1])
+
+
+def sign(value: int) -> int:
+    if value > 0:
+        return 1
+    if value < 0:
+        return -1
+    return 0
+
+
 def clamp_camera(pos: pygame.Vector2) -> pygame.Vector2:
     cx = pos.x - SCREEN_WIDTH * 0.5
     cy = pos.y - SCREEN_HEIGHT * 0.5
     cx = max(0, min(cx, WORLD_WIDTH - SCREEN_WIDTH))
     cy = max(0, min(cy, WORLD_HEIGHT - SCREEN_HEIGHT))
     return pygame.Vector2(cx, cy)
-
-
-def move_with_collisions(
-    start_pos: pygame.Vector2,
-    velocity: pygame.Vector2,
-    dt: float,
-    radius: int,
-    obstacles: list[pygame.Rect],
-) -> pygame.Vector2:
-    new_pos = pygame.Vector2(start_pos)
-    step = velocity * dt
-
-    if step.x != 0:
-        new_pos.x += step.x
-        test_rect = pygame.Rect(0, 0, radius * 2, radius * 2)
-        test_rect.center = (new_pos.x, start_pos.y)
-        for wall in obstacles:
-            if test_rect.colliderect(wall):
-                if step.x > 0:
-                    new_pos.x = wall.left - radius
-                else:
-                    new_pos.x = wall.right + radius
-                test_rect.centerx = new_pos.x
-
-    if step.y != 0:
-        new_pos.y += step.y
-        test_rect = pygame.Rect(0, 0, radius * 2, radius * 2)
-        test_rect.center = (new_pos.x, new_pos.y)
-        for wall in obstacles:
-            if test_rect.colliderect(wall):
-                if step.y > 0:
-                    new_pos.y = wall.top - radius
-                else:
-                    new_pos.y = wall.bottom + radius
-                test_rect.centery = new_pos.y
-
-    new_pos.x = max(radius, min(WORLD_WIDTH - radius, new_pos.x))
-    new_pos.y = max(radius, min(WORLD_HEIGHT - radius, new_pos.y))
-    return new_pos
-
-
-def generate_obstacles() -> list[pygame.Rect]:
-    rng = random.Random(11)
-    obstacles: list[pygame.Rect] = []
-    safe_zone = pygame.Rect(1250, 880, 700, 450)
-
-    for _ in range(44):
-        w = rng.choice((120, 160, 200, 260))
-        h = rng.choice((90, 120, 150, 180))
-        x = rng.randint(80, WORLD_WIDTH - w - 80)
-        y = rng.randint(80, WORLD_HEIGHT - h - 80)
-        rect = pygame.Rect(x, y, w, h)
-        if rect.colliderect(safe_zone):
-            continue
-        if any(rect.colliderect(existing.inflate(12, 12)) for existing in obstacles):
-            continue
-        obstacles.append(rect)
-    return obstacles
-
-
-def spawn_enemies(count: int, obstacles: list[pygame.Rect]) -> list[Enemy]:
-    rng = random.Random(77)
-    enemies: list[Enemy] = []
-    safe_center = pygame.Vector2(WORLD_WIDTH * 0.5, WORLD_HEIGHT * 0.5)
-
-    while len(enemies) < count:
-        pos = pygame.Vector2(rng.randint(60, WORLD_WIDTH - 60), rng.randint(60, WORLD_HEIGHT - 60))
-        if pos.distance_to(safe_center) < 320:
-            continue
-        test = pygame.Rect(0, 0, 44, 44)
-        test.center = (pos.x, pos.y)
-        if any(test.colliderect(wall) for wall in obstacles):
-            continue
-        enemies.append(Enemy(pos=pos, hp=3, attack_cooldown=0))
-
-    return enemies
 
 
 def draw_tiled_texture(
@@ -227,34 +192,201 @@ def draw_tiled_texture(
             surface.blit(texture, (sx, sy))
 
 
+def generate_wall_tiles() -> set[tuple[int, int]]:
+    rng = random.Random(11)
+    chunks: list[pygame.Rect] = []
+    safe_zone = pygame.Rect(GRID_COLS // 2 - 5, GRID_ROWS // 2 - 4, 11, 9)
+
+    for _ in range(85):
+        w = rng.choice((2, 3, 4, 5))
+        h = rng.choice((2, 3, 4))
+        x = rng.randint(1, GRID_COLS - w - 2)
+        y = rng.randint(1, GRID_ROWS - h - 2)
+        rect = pygame.Rect(x, y, w, h)
+        if rect.colliderect(safe_zone):
+            continue
+        if any(rect.colliderect(existing.inflate(2, 2)) for existing in chunks):
+            continue
+        chunks.append(rect)
+
+    wall_tiles: set[tuple[int, int]] = set()
+    for rect in chunks:
+        for gy in range(rect.top, rect.bottom):
+            for gx in range(rect.left, rect.right):
+                wall_tiles.add((gx, gy))
+
+    return wall_tiles
+
+
+def draw_grid_overlay(screen: pygame.Surface, camera: pygame.Vector2) -> None:
+    start_col = max(0, int(camera.x // TILE_SIZE))
+    end_col = min(GRID_COLS - 1, int((camera.x + SCREEN_WIDTH) // TILE_SIZE) + 1)
+    start_row = max(0, int(camera.y // TILE_SIZE))
+    end_row = min(GRID_ROWS - 1, int((camera.y + SCREEN_HEIGHT) // TILE_SIZE) + 1)
+
+    color = (74, 96, 116)
+    for gx in range(start_col, end_col + 1):
+        x = gx * TILE_SIZE - camera.x
+        pygame.draw.line(screen, color, (x, 0), (x, SCREEN_HEIGHT), width=1)
+
+    for gy in range(start_row, end_row + 1):
+        y = gy * TILE_SIZE - camera.y
+        pygame.draw.line(screen, color, (0, y), (SCREEN_WIDTH, y), width=1)
+
+
 def draw_world(
     screen: pygame.Surface,
     grass_texture: pygame.Surface,
     wall_texture: pygame.Surface,
-    obstacles: list[pygame.Rect],
+    wall_tiles: set[tuple[int, int]],
     camera: pygame.Vector2,
 ) -> None:
-    visible_world = pygame.Rect(
-        int(camera.x),
-        int(camera.y),
-        SCREEN_WIDTH,
-        SCREEN_HEIGHT,
+    visible_world = pygame.Rect(int(camera.x), int(camera.y), SCREEN_WIDTH, SCREEN_HEIGHT)
+    draw_tiled_texture(screen, grass_texture, visible_world, camera)
+    draw_grid_overlay(screen, camera)
+
+    start_col = max(0, int(camera.x // TILE_SIZE))
+    end_col = min(GRID_COLS - 1, int((camera.x + SCREEN_WIDTH) // TILE_SIZE) + 1)
+    start_row = max(0, int(camera.y // TILE_SIZE))
+    end_row = min(GRID_ROWS - 1, int((camera.y + SCREEN_HEIGHT) // TILE_SIZE) + 1)
+
+    for gy in range(start_row, end_row + 1):
+        for gx in range(start_col, end_col + 1):
+            if (gx, gy) not in wall_tiles:
+                continue
+            x = gx * TILE_SIZE - camera.x
+            y = gy * TILE_SIZE - camera.y
+            screen.blit(wall_texture, (x, y))
+            pygame.draw.rect(
+                screen,
+                (45, 47, 53),
+                pygame.Rect(x, y, TILE_SIZE, TILE_SIZE),
+                width=2,
+            )
+
+
+def make_player(cell: tuple[int, int]) -> Player:
+    pos = cell_to_world(cell)
+    return Player(
+        cell=cell,
+        pos=pygame.Vector2(pos),
+        move_from=pygame.Vector2(pos),
+        move_to=pygame.Vector2(pos),
+        move_timer=0.0,
+        hp=100,
+        shot_timer=0.0,
     )
 
-    draw_tiled_texture(screen, grass_texture, visible_world, camera)
 
-    for wall in obstacles:
-        if not wall.colliderect(visible_world):
+def make_enemy(cell: tuple[int, int], rng: random.Random) -> Enemy:
+    pos = cell_to_world(cell)
+    return Enemy(
+        cell=cell,
+        pos=pygame.Vector2(pos),
+        move_from=pygame.Vector2(pos),
+        move_to=pygame.Vector2(pos),
+        move_timer=0.0,
+        step_timer=rng.uniform(0.0, ENEMY_STEP_INTERVAL),
+        hp=3,
+        attack_cooldown=0.0,
+    )
+
+
+def spawn_enemies(
+    count: int,
+    wall_tiles: set[tuple[int, int]],
+    player_cell: tuple[int, int],
+) -> list[Enemy]:
+    rng = random.Random(77)
+    enemies: list[Enemy] = []
+    occupied: set[tuple[int, int]] = {player_cell}
+
+    attempts = 0
+    while len(enemies) < count and attempts < 6000:
+        attempts += 1
+        cell = (rng.randint(1, GRID_COLS - 2), rng.randint(1, GRID_ROWS - 2))
+        if cell in wall_tiles or cell in occupied:
             continue
-        draw_tiled_texture(screen, wall_texture, wall, camera)
-        screen_rect = wall.move(-camera.x, -camera.y)
-        pygame.draw.rect(screen, (45, 47, 53), screen_rect, width=2)
+        if manhattan(cell, player_cell) < 8:
+            continue
+        enemies.append(make_enemy(cell, rng))
+        occupied.add(cell)
+
+    return enemies
 
 
-def reset_game(obstacles: list[pygame.Rect]) -> tuple[Player, list[Bullet], list[Enemy], int]:
-    player = Player(pos=pygame.Vector2(WORLD_WIDTH * 0.5, WORLD_HEIGHT * 0.5), hp=100, shot_timer=0)
+def animate_unit(pos: pygame.Vector2, move_from: pygame.Vector2, move_to: pygame.Vector2, move_timer: float, dt: float, duration: float) -> tuple[pygame.Vector2, float]:
+    if move_timer <= 0:
+        return pygame.Vector2(move_to), 0.0
+
+    new_timer = max(0.0, move_timer - dt)
+    t = 1.0 - (new_timer / duration)
+    return move_from.lerp(move_to, t), new_timer
+
+
+def cell_walkable(
+    cell: tuple[int, int],
+    wall_tiles: set[tuple[int, int]],
+    blocked_cells: set[tuple[int, int]],
+) -> bool:
+    return cell_inside(cell) and cell not in wall_tiles and cell not in blocked_cells
+
+
+def request_player_step(
+    player: Player,
+    direction: tuple[int, int],
+    wall_tiles: set[tuple[int, int]],
+    enemy_cells: set[tuple[int, int]],
+) -> None:
+    if player.move_timer > 0:
+        return
+
+    target = (player.cell[0] + direction[0], player.cell[1] + direction[1])
+    if not cell_walkable(target, wall_tiles, enemy_cells):
+        return
+
+    player.cell = target
+    player.move_from = pygame.Vector2(player.pos)
+    player.move_to = cell_to_world(target)
+    player.move_timer = PLAYER_MOVE_TIME
+
+
+def choose_enemy_step(
+    enemy_cell: tuple[int, int],
+    player_cell: tuple[int, int],
+    wall_tiles: set[tuple[int, int]],
+    blocked_cells: set[tuple[int, int]],
+    rng: random.Random,
+) -> tuple[int, int]:
+    dx = player_cell[0] - enemy_cell[0]
+    dy = player_cell[1] - enemy_cell[1]
+
+    primary_dirs: list[tuple[int, int]] = []
+    if abs(dx) >= abs(dy):
+        primary_dirs.append((sign(dx), 0))
+        primary_dirs.append((0, sign(dy)))
+    else:
+        primary_dirs.append((0, sign(dy)))
+        primary_dirs.append((sign(dx), 0))
+
+    fallback_dirs = [(1, 0), (-1, 0), (0, 1), (0, -1)]
+    rng.shuffle(fallback_dirs)
+    candidate_dirs = primary_dirs + fallback_dirs
+
+    for step in candidate_dirs:
+        if step == (0, 0):
+            continue
+        target = (enemy_cell[0] + step[0], enemy_cell[1] + step[1])
+        if cell_walkable(target, wall_tiles, blocked_cells):
+            return target
+    return enemy_cell
+
+
+def reset_game(wall_tiles: set[tuple[int, int]]) -> tuple[Player, list[Bullet], list[Enemy], int]:
+    start_cell = (GRID_COLS // 2, GRID_ROWS // 2)
+    player = make_player(start_cell)
     bullets: list[Bullet] = []
-    enemies = spawn_enemies(14, obstacles)
+    enemies = spawn_enemies(14, wall_tiles, player.cell)
     score = 0
     return player, bullets, enemies, score
 
@@ -275,12 +407,24 @@ def main() -> None:
     player_sprite = make_player_sprite()
     enemy_sprite = make_enemy_sprite()
 
-    obstacles = generate_obstacles()
-    player, bullets, enemies, score = reset_game(obstacles)
+    wall_tiles = generate_wall_tiles()
+    player, bullets, enemies, score = reset_game(wall_tiles)
 
     start_button = Button(pygame.Rect(SCREEN_WIDTH // 2 - 140, 360, 280, 60), "Start Mission")
     quit_button = Button(pygame.Rect(SCREEN_WIDTH // 2 - 140, 440, 280, 60), "Exit")
 
+    movement_keys: dict[int, tuple[int, int]] = {
+        pygame.K_w: (0, -1),
+        pygame.K_UP: (0, -1),
+        pygame.K_s: (0, 1),
+        pygame.K_DOWN: (0, 1),
+        pygame.K_a: (-1, 0),
+        pygame.K_LEFT: (-1, 0),
+        pygame.K_d: (1, 0),
+        pygame.K_RIGHT: (1, 0),
+    }
+
+    enemy_rng = random.Random(1234)
     state = STATE_MENU
     running = True
 
@@ -295,7 +439,7 @@ def main() -> None:
             if state == STATE_MENU:
                 if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                     if start_button.contains(mouse):
-                        player, bullets, enemies, score = reset_game(obstacles)
+                        player, bullets, enemies, score = reset_game(wall_tiles)
                         state = STATE_PLAYING
                     elif quit_button.contains(mouse):
                         running = False
@@ -305,8 +449,12 @@ def main() -> None:
                     state = STATE_MENU
 
                 if state == STATE_GAME_OVER and event.type == pygame.KEYDOWN and event.key == pygame.K_r:
-                    player, bullets, enemies, score = reset_game(obstacles)
+                    player, bullets, enemies, score = reset_game(wall_tiles)
                     state = STATE_PLAYING
+
+                if state == STATE_PLAYING and event.type == pygame.KEYDOWN and event.key in movement_keys:
+                    enemy_cells = {enemy.cell for enemy in enemies}
+                    request_player_step(player, movement_keys[event.key], wall_tiles, enemy_cells)
 
                 if state == STATE_PLAYING and event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                     if player.shot_timer <= 0:
@@ -321,15 +469,11 @@ def main() -> None:
         if state == STATE_MENU:
             for y in range(SCREEN_HEIGHT):
                 t = y / SCREEN_HEIGHT
-                color = (
-                    int(9 + 14 * t),
-                    int(15 + 30 * t),
-                    int(31 + 60 * t),
-                )
+                color = (int(9 + 14 * t), int(15 + 30 * t), int(31 + 60 * t))
                 pygame.draw.line(screen, color, (0, y), (SCREEN_WIDTH, y))
 
             title = title_font.render("ECHO PROTOCOL", True, (235, 246, 255))
-            subtitle = ui_font.render("Prototype: run, shoot, survive", True, (188, 210, 233))
+            subtitle = ui_font.render("Prototype: grid move + shooting", True, (188, 210, 233))
             screen.blit(title, title.get_rect(center=(SCREEN_WIDTH // 2, 190)))
             screen.blit(subtitle, subtitle.get_rect(center=(SCREEN_WIDTH // 2, 250)))
 
@@ -337,7 +481,7 @@ def main() -> None:
             quit_button.draw(screen, menu_font, quit_button.contains(mouse))
 
             info = [
-                "WASD / Arrows - move",
+                "WASD / Arrows - step by grid",
                 "Mouse Left - shoot",
                 "ESC - menu",
             ]
@@ -348,15 +492,14 @@ def main() -> None:
             pygame.display.flip()
             continue
 
-        keys = pygame.key.get_pressed()
-        move = pygame.Vector2(
-            (1 if keys[pygame.K_d] or keys[pygame.K_RIGHT] else 0) - (1 if keys[pygame.K_a] or keys[pygame.K_LEFT] else 0),
-            (1 if keys[pygame.K_s] or keys[pygame.K_DOWN] else 0) - (1 if keys[pygame.K_w] or keys[pygame.K_UP] else 0),
+        player.pos, player.move_timer = animate_unit(
+            player.pos,
+            player.move_from,
+            player.move_to,
+            player.move_timer,
+            dt,
+            PLAYER_MOVE_TIME,
         )
-        if move.length_squared() > 0:
-            move = move.normalize() * PLAYER_SPEED
-            player.pos = move_with_collisions(player.pos, move, dt, PLAYER_RADIUS, obstacles)
-
         player.shot_timer = max(0.0, player.shot_timer - dt)
 
         if state == STATE_PLAYING:
@@ -369,8 +512,8 @@ def main() -> None:
                 if not WORLD_RECT.collidepoint(bullet.pos.x, bullet.pos.y):
                     continue
 
-                hit_wall = any(wall.collidepoint(bullet.pos.x, bullet.pos.y) for wall in obstacles)
-                if hit_wall:
+                bullet_cell = world_to_cell(bullet.pos)
+                if bullet_cell in wall_tiles:
                     continue
 
                 hit_enemy = None
@@ -389,25 +532,45 @@ def main() -> None:
             bullets = alive_bullets
 
             for enemy in enemies:
+                enemy.pos, enemy.move_timer = animate_unit(
+                    enemy.pos,
+                    enemy.move_from,
+                    enemy.move_to,
+                    enemy.move_timer,
+                    dt,
+                    ENEMY_MOVE_TIME,
+                )
+                enemy.step_timer = max(0.0, enemy.step_timer - dt)
                 enemy.attack_cooldown = max(0.0, enemy.attack_cooldown - dt)
 
-                to_player = player.pos - enemy.pos
-                if to_player.length_squared() > 0:
-                    direction = to_player.normalize()
-                else:
-                    direction = pygame.Vector2()
-                enemy_velocity = direction * ENEMY_SPEED
-                enemy.pos = move_with_collisions(enemy.pos, enemy_velocity, dt, 18, obstacles)
+            enemy_cells_snapshot = {enemy.cell for enemy in enemies}
+            for enemy in enemies:
+                if manhattan(enemy.cell, player.cell) == 1 and enemy.attack_cooldown <= 0:
+                    player.hp -= ENEMY_ATTACK_DAMAGE
+                    enemy.attack_cooldown = ENEMY_ATTACK_COOLDOWN
+                    continue
 
-                if enemy.pos.distance_to(player.pos) < 36 and enemy.attack_cooldown <= 0:
-                    player.hp -= 9
-                    enemy.attack_cooldown = 0.65
+                if enemy.move_timer > 0 or enemy.step_timer > 0:
+                    continue
+
+                blocked_cells = set(enemy_cells_snapshot)
+                blocked_cells.discard(enemy.cell)
+                blocked_cells.add(player.cell)
+                target = choose_enemy_step(enemy.cell, player.cell, wall_tiles, blocked_cells, enemy_rng)
+                enemy.step_timer = ENEMY_STEP_INTERVAL
+                if target != enemy.cell:
+                    enemy_cells_snapshot.discard(enemy.cell)
+                    enemy.cell = target
+                    enemy_cells_snapshot.add(enemy.cell)
+                    enemy.move_from = pygame.Vector2(enemy.pos)
+                    enemy.move_to = cell_to_world(target)
+                    enemy.move_timer = ENEMY_MOVE_TIME
 
             if player.hp <= 0:
                 state = STATE_GAME_OVER
 
         camera = clamp_camera(player.pos)
-        draw_world(screen, grass_texture, wall_texture, obstacles, camera)
+        draw_world(screen, grass_texture, wall_texture, wall_tiles, camera)
 
         for bullet in bullets:
             sx = int(bullet.pos.x - camera.x)
@@ -425,18 +588,20 @@ def main() -> None:
         rotated = pygame.transform.rotozoom(player_sprite, angle, 1.0)
         screen.blit(rotated, rotated.get_rect(center=(player.pos.x - camera.x, player.pos.y - camera.y)))
 
-        hud_bg = pygame.Surface((300, 92), pygame.SRCALPHA)
-        pygame.draw.rect(hud_bg, (8, 10, 20, 180), hud_bg.get_rect(), border_radius=12)
+        hud_bg = pygame.Surface((380, 112), pygame.SRCALPHA)
+        pygame.draw.rect(hud_bg, (8, 10, 20, 190), hud_bg.get_rect(), border_radius=12)
         screen.blit(hud_bg, (14, 14))
         hp_color = (122, 238, 150) if player.hp > 40 else (255, 184, 94) if player.hp > 20 else (255, 100, 100)
         hp_txt = ui_font.render(f"HP: {max(0, player.hp)}", True, hp_color)
         score_txt = ui_font.render(f"Kills: {score}", True, (218, 232, 248))
         left_txt = ui_font.render(f"Enemies: {len(enemies)}", True, (218, 232, 248))
+        cell_txt = small_font.render(f"Cell: {player.cell[0]}, {player.cell[1]}", True, (196, 216, 236))
         screen.blit(hp_txt, (28, 24))
         screen.blit(score_txt, (28, 50))
-        screen.blit(left_txt, (160, 50))
+        screen.blit(left_txt, (170, 50))
+        screen.blit(cell_txt, (28, 80))
 
-        controls = small_font.render("WASD move | LMB shoot | ESC menu", True, (220, 236, 255))
+        controls = small_font.render("WASD step grid | LMB shoot | ESC menu", True, (220, 236, 255))
         screen.blit(controls, (18, SCREEN_HEIGHT - 32))
 
         if state == STATE_GAME_OVER:

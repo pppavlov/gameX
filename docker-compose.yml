@@ -1,0 +1,14 @@
+services:
+  check:
+    build: .
+    working_dir: /app
+    volumes:
+      - ./:/app
+    command: python -m py_compile main.py
+
+  build:
+    build: .
+    working_dir: /app
+    volumes:
+      - ./:/app
+    command: pyinstaller --noconfirm --clean --onefile --windowed --name EchoProtocolPrototype main.py
