@@ -7,12 +7,18 @@ Engine:
 
 Implemented now (`main.py`):
 - 3D scene with top-down/angled camera
-- procedural 3D textures (ground, walls, cover, units)
-- main menu
-- WASD movement
-- mouse shooting with ray-to-ground aiming
-- enemies with chase/attack AI
-- destructible cover blocks
+- turn-based tactical loop (player turn / enemy turn)
+- AP system (2 AP), unit selection, end turn
+- grid movement with path cost (1 AP short move, 2 AP long move)
+- hit chance / crit / cover / flank calculation
+- overwatch and fortify actions
+- procedural 3D textures (ground, walls, trees, rocks, houses, units)
+- proper main menu (buttons Start/Exit + keyboard shortcuts)
+- soldier models with weapon
+- shooting animation (muzzle flash + recoil)
+- mouse tactical controls (select / move / shoot)
+- enemies with turn-based AI
+- destructible environment objects (cover, trees, rocks, houses)
 - mission complete / mission failed flow
 - Windows `.exe` build script
 - Docker build workflow
@@ -59,10 +65,20 @@ Docker artifact:
 `dist/EchoProtocolPrototype/` (Linux app directory)
 
 ## Controls
-- `ENTER`: start mission from menu / restart after result
-- `ESC`: menu (during play) or exit (menu/result)
-- `WASD`: move
-- `LMB`: shoot
+- Menu: `ENTER` start, `ESC` exit, or click buttons
+- Battle:
+- `LMB`: select soldier / attack enemy
+- `RMB`: move selected soldier
+- `TAB`: next soldier
+- `O`: overwatch
+- `F`: fortify
+- `E` or `SPACE`: end turn
+- `SHIFT + LMB` on object: shoot cover/object
+- Camera:
+- `WASD` or arrows: pan camera
+- `Q` / `E`: rotate camera
+- Mouse wheel: zoom
+- `ESC`: back to menu (during play/game over)
 - `R`: restart after mission result
 
 ## Fix for "No graphics pipe is available"
