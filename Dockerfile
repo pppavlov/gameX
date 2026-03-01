@@ -5,13 +5,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libsdl2-2.0-0 \
-    libsdl2-image-2.0-0 \
-    libsdl2-mixer-2.0-0 \
-    libsdl2-ttf-2.0-0 \
+    libgl1 \
+    libx11-6 \
+    libxext6 \
+    libxi6 \
+    libxrandr2 \
+    libxxf86vm1 \
+    libxcursor1 \
     libfreetype6 \
-    libjpeg62-turbo \
-    libportmidi0 \
     zlib1g \
     && rm -rf /var/lib/apt/lists/*
 

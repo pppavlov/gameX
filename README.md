@@ -1,19 +1,24 @@
 # gameX
 
-Python alpha prototype for the `tech.md` concept (XCOM-style loop + echo setting).
+3D top-down Python prototype of ECHO PROTOCOL.
 
-Implemented now:
-- main menu and campaign flow
-- geoscape/base screen (missions, resources, research, room upgrades)
-- turn-based tactical combat on grid
-- AP system (2 AP per soldier)
-- hit chance + crit + cover (half/full) + flanking
-- fog of war + enemy pod activation
-- overwatch + suppression
-- destructible cover
-- soldier classes and mission progression (XP/levels)
+Engine:
+- `Panda3D` (no `pygame` in main runtime)
+
+Implemented now (`main.py`):
+- 3D scene with top-down/angled camera
+- procedural 3D textures (ground, walls, cover, units)
+- main menu
+- WASD movement
+- mouse shooting with ray-to-ground aiming
+- enemies with chase/attack AI
+- destructible cover blocks
+- mission complete / mission failed flow
 - Windows `.exe` build script
 - Docker build workflow
+
+Legacy:
+- previous 2D alpha is kept in `main_2d_alpha.py`
 
 ## Run (dev)
 1. Install Python 3.11+.
@@ -21,19 +26,18 @@ Implemented now:
    ```bash
    python -m pip install -r requirements.txt
    ```
-3. Start game:
+3. Start:
    ```bash
    python main.py
    ```
 
 ## Build EXE (Windows)
-Run:
 ```bat
 build_exe.bat
 ```
 
-After build, executable will be in:
-`dist\EchoProtocolPrototype.exe`
+Output:
+`dist\EchoProtocolPrototype\EchoProtocolPrototype.exe`
 
 ## Build in Docker
 Check code:
@@ -41,35 +45,31 @@ Check code:
 docker compose run --rm check
 ```
 
-Build artifact in container:
+Build artifact:
 ```bash
 docker compose run --rm build
 ```
 
-Shortcut for Windows:
+Windows shortcut:
 ```bat
 docker_build.bat
 ```
 
-After Docker build, artifact will be in:
-`dist\EchoProtocolPrototype` (Linux binary)
+Docker artifact:
+`dist/EchoProtocolPrototype/` (Linux app directory)
 
 ## Controls
-### Geoscape
-- `1` / `2` / `3`: launch mission
-- `R`: switch active research
-- `L`: upgrade Lab
-- `A`: upgrade Armory
-- `Y`: upgrade Relay
-- `ESC`: back to menu
+- `ENTER`: start mission from menu / restart after result
+- `ESC`: menu (during play) or exit (menu/result)
+- `WASD`: move
+- `LMB`: shoot
+- `R`: restart after mission result
 
-### Battle
-- `LMB`: select unit / shoot enemy
-- `RMB`: move selected unit
-- `Shift + LMB` on cover: shoot cover
-- `TAB`: cycle soldiers
-- `O`: overwatch
-- `P`: suppression (on selected enemy)
-- `F`: class ability
-- `E` or `SPACE`: end turn
-- `ENTER`: continue after mission result
+## Fix for "No graphics pipe is available"
+If you still see this error:
+1. Reinstall Panda3D:
+   ```bash
+   python -m pip install --force-reinstall panda3d==1.10.15
+   ```
+2. Run from project root (so `Config.prc` is found).
+3. Prefer the new `onedir` build from `build_exe.bat` (it bundles Panda3D display plugins more reliably than onefile).

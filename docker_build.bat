@@ -9,5 +9,5 @@ echo [2/2] Build game artifact in container...
 docker compose run --rm build
 if errorlevel 1 exit /b 1
 
-echo Done. Artifact: dist\EchoProtocolPrototype
+echo Done. Artifact: dist\EchoProtocolPrototype\EchoProtocolPrototype
 pause

@@ -11,4 +11,4 @@ services:
     working_dir: /app
     volumes:
       - ./:/app
-    command: pyinstaller --noconfirm --clean --onefile --windowed --name EchoProtocolPrototype main.py
+    command: pyinstaller --noconfirm --clean --windowed --onedir --name EchoProtocolPrototype --collect-all panda3d --add-data "Config.prc:." main.py
